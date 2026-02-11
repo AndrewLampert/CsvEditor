@@ -56,6 +56,31 @@ POSITIONS = {
     "15": "ROLB", "16": "CB", "17": "FS", "18": "SS", "19": "K", "20": "P"
 }
 
+# Position display order (QB, HB, FB, WR, TE, OL, DL, LB, CB, FS, SS, K, P)
+POSITION_ORDER = {
+    "0": 0,    # QB
+    "1": 1,    # HB
+    "2": 2,    # FB
+    "3": 3,    # WR
+    "4": 4,    # TE
+    "5": 5,    # LT
+    "6": 6,    # LG
+    "7": 7,    # C
+    "8": 8,    # RG
+    "9": 9,    # RT
+    "10": 10,  # LE
+    "12": 11,  # DT
+    "11": 12,  # RE
+    "13": 13,  # LOLB
+    "14": 14,  # MLB
+    "15": 15,  # ROLB
+    "16": 16,  # CB
+    "17": 17,  # FS
+    "18": 18,  # SS
+    "19": 19,  # K
+    "20": 20,  # P
+}
+
 STAT_MAX_VALUE = 99
 
 # -----------------------------
@@ -509,6 +534,7 @@ class App(tk.Tk):
         self.selected_player_index = None
         self.selected_stat_key = None
         self._player_index_map = []
+        self._pick_index_map = []  # For acquire picks dropdown mapping
 
         self._build_ui()
 
@@ -560,7 +586,7 @@ class App(tk.Tk):
         mid = ttk.Frame(root)
         mid.pack(side="left", fill="both", expand=True, padx=(0, 8), pady=6)
 
-        ttk.Label(mid, text="Players on Team").pack(anchor="w")
+        ttk.Label(mid, text="Players on Team (play.csv)").pack(anchor="w")
         self.lst_players = tk.Listbox(mid, height=28, exportselection=False)
         self.lst_players.pack(fill="both", expand=True)
         self.lst_players.bind("<<ListboxSelect>>", self.on_player_select)
@@ -642,7 +668,7 @@ class App(tk.Tk):
         top = ttk.Frame(root)
         top.pack(fill="x", padx=10, pady=10)
 
-        ttk.Label(top, text="Draft Picks").pack(side="left")
+        ttk.Label(top, text="Draft Picks (drpk.csv)").pack(side="left")
         ttk.Button(top, text="Refresh", command=self.refresh_picks).pack(side="left", padx=8)
 
         cols = ("team", "pick", "year_offset")
@@ -655,17 +681,21 @@ class App(tk.Tk):
         bottom = ttk.Frame(root)
         bottom.pack(fill="x", padx=10, pady=(0, 10))
 
-        ttk.Label(bottom, text="Acquire picks: From Team ID").pack(side="left")
-        self.ent_pick_from = ttk.Entry(bottom, width=10)
-        self.ent_pick_from.pack(side="left", padx=6)
+        ttk.Label(bottom, text="Acquire picks: From Team").pack(side="left")
+        self.cmb_pick_from = ttk.Combobox(bottom, width=24, state="readonly")
+        team_vals = [f"{tid}: {name}" for tid, name in TEAM_NAMES.items()]
+        self.cmb_pick_from["values"] = team_vals
+        self.cmb_pick_from.pack(side="left", padx=6)
+        self.cmb_pick_from.bind("<<ComboboxSelected>>", self._on_from_team_changed)
 
-        ttk.Label(bottom, text="→ To Team ID").pack(side="left")
-        self.ent_pick_to = ttk.Entry(bottom, width=10)
-        self.ent_pick_to.pack(side="left", padx=6)
+        ttk.Label(bottom, text="→ To Team").pack(side="left", padx=(10, 0))
+        self.cmb_pick_to = ttk.Combobox(bottom, width=24, state="readonly")
+        self.cmb_pick_to["values"] = team_vals
+        self.cmb_pick_to.pack(side="left", padx=6)
 
-        ttk.Label(bottom, text="Pick indexes (comma) from filtered list").pack(side="left", padx=(10, 0))
-        self.ent_pick_idxs = ttk.Entry(bottom, width=18)
-        self.ent_pick_idxs.pack(side="left", padx=6)
+        ttk.Label(bottom, text="Pick(s)").pack(side="left", padx=(10, 0))
+        self.cmb_pick_idxs = ttk.Combobox(bottom, width=30, state="readonly")
+        self.cmb_pick_idxs.pack(side="left", padx=6)
 
         ttk.Button(bottom, text="Acquire", command=self.on_acquire_picks).pack(side="left", padx=8)
 
@@ -674,7 +704,7 @@ class App(tk.Tk):
         frm = ttk.Frame(root)
         frm.pack(fill="x", padx=10, pady=14)
 
-        ttk.Label(frm, text="Salary Cap (SCAD)").grid(row=0, column=0, sticky="w")
+        ttk.Label(frm, text="Salary Cap (slri.csv)").grid(row=0, column=0, sticky="w")
         self.ent_cap = ttk.Entry(frm, width=18)
         self.ent_cap.grid(row=0, column=1, sticky="w", padx=8)
         ttk.Button(frm, text="Apply (max 260,000,000)", command=self.on_apply_cap).grid(row=0, column=2, sticky="w", padx=8)
@@ -794,6 +824,13 @@ class App(tk.Tk):
                         if (r.get(self.model.team_col, "") or "").strip() == tid]
         else:
             filtered = list(enumerate(self.model.players))
+
+        # Sort by position (custom order), then first name, then last name
+        filtered = sorted(filtered, key=lambda item: (
+            POSITION_ORDER.get((item[1].get(PLAYER_POS_CODE, "") or "").strip(), 999),
+            item[1].get(PLAYER_FIRST_NAME_CODE, "").strip(),
+            item[1].get(PLAYER_LAST_NAME_CODE, "").strip()
+        ))
 
         self._player_index_map = [i for i, _ in filtered]
 
@@ -1053,52 +1090,125 @@ class App(tk.Tk):
         for iid in self.tree_picks.get_children():
             self.tree_picks.delete(iid)
         if not self.model.picks:
+            self.cmb_pick_from.set("")
+            self.cmb_pick_to.set("")
+            self.cmb_pick_idxs.set("")
+            self.cmb_pick_idxs["values"] = []
             return
 
-        for i, p in enumerate(self.model.picks):
+        # Sort picks by team, then by year offset (0, 1, 3...), then by round
+        sorted_picks = sorted(
+            enumerate(self.model.picks),
+            key=lambda item: (
+                int((item[1].get(DRAFT_PICK_ID, "") or "").strip() or "99999"),  # Team ID first
+                y if (y := safe_int(item[1].get(DRAFT_PICK_YEAR, ""))) is not None else 999,  # Year offset (0, 1, 3...)
+                (safe_int(item[1].get(DRAFT_PICK_NUM, "")) or 0) // 32  # Round number
+            )
+        )
+
+        # Create a mapping of year offsets to sequential display numbers (1, 2, 3...)
+        unique_years = sorted(set(
+            safe_int(p.get(DRAFT_PICK_YEAR, "")) 
+            for _, p in sorted_picks 
+            if safe_int(p.get(DRAFT_PICK_YEAR, "")) is not None
+        ))
+        year_map = {y: i + 1 for i, y in enumerate(unique_years)}
+
+        for i, (orig_idx, p) in enumerate(sorted_picks):
             tid = (p.get(DRAFT_PICK_ID, "") or "").strip()
             pick_num = safe_int(p.get(DRAFT_PICK_NUM, ""))
             year_off = safe_int(p.get(DRAFT_PICK_YEAR, ""))
 
             pick_disp = "-" if pick_num is None else str(pick_num + 1)
             team_name = TEAM_NAMES.get(tid, tid or "Unknown")
+            round_num = (pick_num + 1 - 1) // 32 + 1 if pick_num is not None else "-"
+            
+            # Display year using sequential mapping: 0→1, 1→2, 3→3, etc.
+            year_display = year_map.get(year_off, "-") if year_off is not None else "-"
 
-            self.tree_picks.insert("", tk.END, iid=str(i),
-                                  values=(f"{tid}: {team_name}", pick_disp, str(year_off) if year_off is not None else "-"))
+            self.tree_picks.insert("", tk.END, iid=str(orig_idx),
+                                  values=(f"{tid}: {team_name}", f"R{round_num}:{pick_disp}", str(year_display)))
+        
+        # Reset dropdowns
+        if self.cmb_pick_from["values"]:
+            self.cmb_pick_from.current(0)
+            self._on_from_team_changed()
+
+    def _on_from_team_changed(self, event=None):
+        """Populate picks dropdown when 'from team' is selected."""
+        from_combo_val = self.cmb_pick_from.get()
+        if not from_combo_val or ":" not in from_combo_val:
+            self.cmb_pick_idxs["values"] = []
+            return
+
+        from_tid = from_combo_val.split(":", 1)[0].strip()
+        
+        # Get all picks for this team
+        team_picks_raw = []
+        for model_idx, p in enumerate(self.model.picks):
+            if (p.get(DRAFT_PICK_ID, "") or "").strip() == from_tid:
+                pick_num = safe_int(p.get(DRAFT_PICK_NUM, ""))
+                year_off = safe_int(p.get(DRAFT_PICK_YEAR, ""))
+                round_num = (pick_num + 1 - 1) // 32 + 1 if pick_num is not None else 999
+                team_picks_raw.append((model_idx, pick_num, year_off, round_num))
+        
+        # Sort by year offset (ascending = most recent first), then round, then pick number
+        # This ensures consistent ordering: all Yr:0 first, then Yr:1, etc.
+        team_picks_raw.sort(key=lambda x: (
+            y if (y := x[2]) is not None else 999,  # year_off
+            x[3],  # round_num
+            p if (p := x[1]) is not None else 999  # pick_num
+        ))
+        
+        # Create a mapping of year offsets to sequential display numbers (1, 2, 3...)
+        unique_years = sorted(set(y for _, _, y, _ in team_picks_raw if y is not None))
+        year_map = {y: i + 1 for i, y in enumerate(unique_years)}
+        
+        # Create display list with indexes and store model indices
+        pick_displays = []
+        self._pick_index_map = []  # Store model indices for later reference
+        for local_idx, (model_idx, pick_num, year_off, round_num) in enumerate(team_picks_raw):
+            # Display year using sequential mapping: 0→1, 1→2, 3→3, etc.
+            year_display = year_map.get(year_off, "?") if year_off is not None else "?"
+            pick_display = f"R{round_num}:{pick_num + 1 if pick_num is not None else '-'} (Yr:{year_display})  [Idx:{local_idx}]"
+            pick_displays.append(pick_display)
+            self._pick_index_map.append(model_idx)  # Store the actual model index
+        
+        self.cmb_pick_idxs["values"] = pick_displays
+        if pick_displays:
+            self.cmb_pick_idxs.current(0)
 
     def on_acquire_picks(self):
         if not self.model.picks:
             messagebox.showinfo("No picks", "Load drpk.csv to edit picks.")
             return
 
-        from_tid = self.ent_pick_from.get().strip()
-        to_tid = self.ent_pick_to.get().strip()
-        raw_idxs = self.ent_pick_idxs.get().strip()
+        from_combo_val = self.cmb_pick_from.get()
+        to_combo_val = self.cmb_pick_to.get()
+        pick_display = self.cmb_pick_idxs.get()
 
-        if not from_tid or not to_tid or not raw_idxs:
-            messagebox.showwarning("Missing input", "Enter from team, to team, and indexes.")
+        if not from_combo_val or not to_combo_val or not pick_display:
+            messagebox.showwarning("Missing selection", "Select from team, to team, and pick(s).")
             return
 
-        from_list = [p for p in self.model.picks if (p.get(DRAFT_PICK_ID, "") or "").strip() == from_tid]
-        if not from_list:
-            messagebox.showinfo("No picks", "No picks found for that 'from' team.")
+        from_tid = from_combo_val.split(":", 1)[0].strip() if ":" in from_combo_val else from_combo_val
+        to_tid = to_combo_val.split(":", 1)[0].strip() if ":" in to_combo_val else to_combo_val
+
+        # Get the current index from the dropdown
+        current_display_idx = self.cmb_pick_idxs.current()
+        if current_display_idx < 0 or current_display_idx >= len(self._pick_index_map):
+            messagebox.showwarning("Invalid selection", "Please select a valid pick.")
             return
 
-        idxs = []
-        for part in raw_idxs.split(","):
-            part = part.strip()
-            if part.isdigit():
-                idxs.append(int(part))
-        idxs = [i for i in idxs if 0 <= i < len(from_list)]
-        if not idxs:
-            messagebox.showwarning("Bad indexes", "No valid indexes parsed.")
-            return
+        # Get the actual model index from the mapping
+        model_idx = self._pick_index_map[current_display_idx]
 
-        for i in idxs:
-            from_list[i][DRAFT_PICK_ID] = to_tid
+        # Modify the pick directly in model.picks
+        self.model.picks[model_idx][DRAFT_PICK_ID] = to_tid
 
-        messagebox.showinfo("Acquired", f"Moved {len(idxs)} pick(s) from {from_tid} → {to_tid}")
+        messagebox.showinfo("Acquired", f"Moved pick from {from_tid} → {to_tid}")
         self.refresh_picks()
+        self._on_from_team_changed()  # Refresh picks dropdown
 
     # ---------- Salary Cap ----------
     def refresh_cap(self):
