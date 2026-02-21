@@ -1,7 +1,7 @@
 """
 HC09 / Franchise CSV Editor (GUI) - HC09 Safe Trade Edition
 - Tkinter GUI (no external deps)
-- Loads play.csv (players), optional drpk.csv (draft picks), optional slri.csv (salary cap)
+- Loads play.csv (players), optional drpk.csv (draft picks), optional slri.csv (salary cap), optional trvw.csv (trainers), optional coch.csv (coaches), optional gmvw.csv (GMs)
 - Case-sensitive columns ON PURPOSE (we only normalize invisible junk like BOM/whitespace)
 - Stat editor shows ONLY stats that have descriptions (STAT_META)
 - MAX columns are HARD-CODED for YOUR export (no duplicates, no guessing)
@@ -276,6 +276,10 @@ class CSVModel:
         self.play_path = ""
         self.drpk_path = ""
         self.slri_path = ""
+        # Optional staff CSVs
+        self.trainer_path = ""
+        self.coach_path = ""
+        self.gm_path = ""
 
         self.players = []          # list[dict]
         self.player_headers = []   # list[str]
@@ -283,6 +287,13 @@ class CSVModel:
         self.pick_headers = []     # list[str]
         self.salaries = []         # list[dict]
         self.salary_headers = []   # list[str]
+
+        self.trainers = []         # list[dict]
+        self.trainer_headers = []  # list[str]
+        self.coaches = []          # list[dict]
+        self.coach_headers = []    # list[str]
+        self.gms = []              # list[dict]
+        self.gm_headers = []       # list[str]
 
         self.team_col = None
         self.max_map = {}
@@ -319,14 +330,20 @@ class CSVModel:
                 w.writerow(r)
         return out
 
-    def load_all(self, play_path, drpk_path="", slri_path=""):
+    def load_all(self, play_path, drpk_path="", slri_path="", trainer_path="", coach_path="", gm_path=""):
         self.play_path = play_path or ""
         self.drpk_path = drpk_path or ""
         self.slri_path = slri_path or ""
+        self.trainer_path = trainer_path or ""
+        self.coach_path = coach_path or ""
+        self.gm_path = gm_path or ""
 
         self.players, self.player_headers = self.load_csv(self.play_path)
         self.picks, self.pick_headers = self.load_csv(self.drpk_path) if self.drpk_path else ([], [])
         self.salaries, self.salary_headers = self.load_csv(self.slri_path) if self.slri_path else ([], [])
+        self.trainers, self.trainer_headers = self.load_csv(self.trainer_path) if self.trainer_path else ([], [])
+        self.coaches, self.coach_headers = self.load_csv(self.coach_path) if self.coach_path else ([], [])
+        self.gms, self.gm_headers = self.load_csv(self.gm_path) if self.gm_path else ([], [])
 
         if not self.players:
             raise ValueError("play.csv loaded 0 players/rows.")
@@ -569,6 +586,10 @@ class App(tk.Tk):
         self._build_players_tab()
         self._build_picks_tab()
         self._build_cap_tab()
+        # New staff tabs
+        self._build_trainer_tab()
+        self._build_coach_tab()
+        self._build_gm_tab()
 
     def _build_players_tab(self):
         root = self.tab_players
@@ -712,6 +733,84 @@ class App(tk.Tk):
         self.lbl_cap_status = ttk.Label(root, text="Load slri.csv to edit cap.")
         self.lbl_cap_status.pack(anchor="w", padx=10, pady=(8, 0))
 
+    # ---------- Staff Tabs (Trainer / Coach / GM) ----------
+    def _build_trainer_tab(self):
+        root = ttk.Frame(self.notebook)
+        self.tab_trainer = root
+        self.notebook.add(self.tab_trainer, text="Trainer")
+
+        top = ttk.Frame(root)
+        top.pack(fill="x", padx=10, pady=10)
+        ttk.Label(top, text="Trainer (trvw.csv)").pack(side="left")
+        ttk.Button(top, text="Refresh", command=self.refresh_trainer).pack(side="left", padx=8)
+
+        self.tree_trainer = ttk.Treeview(root, show="headings", height=20)
+        self.tree_trainer.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+        # Bottom editor for SKPT
+        btm = ttk.Frame(root)
+        btm.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Label(btm, text="Selected SKPT:").pack(side="left")
+        self.ent_trainer_skpt = ttk.Entry(btm, width=12)
+        self.ent_trainer_skpt.pack(side="left", padx=(6, 8))
+        ttk.Button(btm, text="Apply SKPT", command=self._apply_trainer_skpt).pack(side="left")
+        self.tree_trainer.bind("<<TreeviewSelect>>", lambda e: self._on_trainer_select())
+        self.tree_trainer.bind("<Double-1>", lambda e: self._on_tree_double_click(e, self.tree_trainer))
+
+    def _build_coach_tab(self):
+        root = ttk.Frame(self.notebook)
+        self.tab_coach = root
+        self.notebook.add(self.tab_coach, text="Coach")
+
+        top = ttk.Frame(root)
+        top.pack(fill="x", padx=10, pady=10)
+        ttk.Label(top, text="Coach (coch.csv)").pack(side="left")
+        ttk.Button(top, text="Refresh", command=self.refresh_coach).pack(side="left", padx=8)
+
+        # Search controls for coach first/last name
+        self.coach_search_var = tk.StringVar()
+        ttk.Label(top, text="Search:").pack(side="left", padx=(12, 4))
+        self.ent_coach_search = ttk.Entry(top, textvariable=self.coach_search_var, width=20)
+        self.ent_coach_search.pack(side="left")
+        ttk.Button(top, text="Find", command=lambda: self.refresh_coach()).pack(side="left", padx=(6, 4))
+        ttk.Button(top, text="Clear", command=lambda: (self.coach_search_var.set(""), self.refresh_coach())).pack(side="left")
+
+        self.tree_coach = ttk.Treeview(root, show="headings", height=20)
+        self.tree_coach.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+        # Bottom editor for SKPT
+        btm = ttk.Frame(root)
+        btm.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Label(btm, text="Selected SKPT:").pack(side="left")
+        self.ent_coach_skpt = ttk.Entry(btm, width=12)
+        self.ent_coach_skpt.pack(side="left", padx=(6, 8))
+        ttk.Button(btm, text="Apply SKPT", command=self._apply_coach_skpt).pack(side="left")
+        self.tree_coach.bind("<<TreeviewSelect>>", lambda e: self._on_coach_select())
+        self.tree_coach.bind("<Double-1>", lambda e: self._on_tree_double_click(e, self.tree_coach))
+
+    def _build_gm_tab(self):
+        root = ttk.Frame(self.notebook)
+        self.tab_gm = root
+        self.notebook.add(self.tab_gm, text="GM")
+
+        top = ttk.Frame(root)
+        top.pack(fill="x", padx=10, pady=10)
+        ttk.Label(top, text="GM (gmvw.csv)").pack(side="left")
+        ttk.Button(top, text="Refresh", command=self.refresh_gm).pack(side="left", padx=8)
+
+        self.tree_gm = ttk.Treeview(root, show="headings", height=20)
+        self.tree_gm.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+        # Bottom editor for SKPT
+        btm = ttk.Frame(root)
+        btm.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Label(btm, text="Selected SKPT:").pack(side="left")
+        self.ent_gm_skpt = ttk.Entry(btm, width=12)
+        self.ent_gm_skpt.pack(side="left", padx=(6, 8))
+        ttk.Button(btm, text="Apply SKPT", command=self._apply_gm_skpt).pack(side="left")
+        self.tree_gm.bind("<<TreeviewSelect>>", lambda e: self._on_gm_select())
+        self.tree_gm.bind("<Double-1>", lambda e: self._on_tree_double_click(e, self.tree_gm))
+
     # ---------- Load / Save ----------
     def on_load(self):
         try:
@@ -731,7 +830,20 @@ class App(tk.Tk):
                 filetypes=[("CSV", "*.csv"), ("All files", "*.*")]
             )
 
-            self.model.load_all(play, drpk, slri)
+            trainer = filedialog.askopenfilename(
+                title="Optional: Select trainer.csv (staff)",
+                filetypes=[("CSV", "*.csv"), ("All files", "*.*")]
+            )
+            coach = filedialog.askopenfilename(
+                title="Optional: Select coach.csv (staff)",
+                filetypes=[("CSV", "*.csv"), ("All files", "*.*")]
+            )
+            gm = filedialog.askopenfilename(
+                title="Optional: Select gm.csv (staff)",
+                filetypes=[("CSV", "*.csv"), ("All files", "*.*")]
+            )
+
+            self.model.load_all(play, drpk, slri, trainer, coach, gm)
 
             if not self.model.team_col:
                 messagebox.showwarning(
@@ -753,6 +865,9 @@ class App(tk.Tk):
             self.refresh_teams()
             self.refresh_picks()
             self.refresh_cap()
+            self.refresh_trainer()
+            self.refresh_coach()
+            self.refresh_gm()
             self.refresh_raw_columns()
             self._select_default_team()
 
@@ -775,6 +890,17 @@ class App(tk.Tk):
             if self.model.salaries and self.model.slri_path:
                 out3 = self.model.save_csv(self.model.salaries, self.model.salary_headers, self.model.slri_path)
                 outs.append(out3)
+
+            # Save optional staff CSVs
+            if self.model.trainers and self.model.trainer_path:
+                out4 = self.model.save_csv(self.model.trainers, self.model.trainer_headers, self.model.trainer_path)
+                outs.append(out4)
+            if self.model.coaches and self.model.coach_path:
+                out5 = self.model.save_csv(self.model.coaches, self.model.coach_headers, self.model.coach_path)
+                outs.append(out5)
+            if self.model.gms and self.model.gm_path:
+                out6 = self.model.save_csv(self.model.gms, self.model.gm_headers, self.model.gm_path)
+                outs.append(out6)
 
             messagebox.showinfo("Saved", "Saved:\n\n" + "\n".join(outs))
         except Exception as e:
@@ -1222,6 +1348,352 @@ class App(tk.Tk):
         self.ent_cap.delete(0, tk.END)
         self.ent_cap.insert(0, str(cap_val))
         self.lbl_cap_status.configure(text=f"Loaded slri.csv rows: {len(self.model.salaries)}")
+
+    def _populate_tree_with_rows(self, tree: ttk.Treeview, headers: list, rows: list):
+        # Clear existing
+        for iid in tree.get_children():
+            tree.delete(iid)
+
+        if not headers:
+            tree["columns"] = ()
+            return
+
+        tree["columns"] = headers
+        for h in headers:
+            tree.heading(h, text=h)
+            tree.column(h, width=140, anchor="w")
+
+        for i, r in enumerate(rows):
+            vals = [ (r.get(h, "") or "") for h in headers ]
+            tree.insert("", tk.END, iid=str(i), values=vals)
+
+    def refresh_trainer(self):
+        # Show TGID and SKPT if present (display team name for TGID)
+        desired = ["TGID", "SKPT"]
+        headers = [h for h in desired if h in (self.model.trainer_headers or [])]
+        if not headers:
+            self._populate_tree_with_rows(self.tree_trainer, self.model.trainer_headers, self.model.trainers)
+            return
+
+        # Prepare rows as (model_idx, row) for sorting
+        rows = list(enumerate(self.model.trainers))
+
+        # Sort by TGID if present, numeric when possible
+        if "TGID" in (self.model.trainer_headers or []):
+            def tg_key(ir):
+                _, r = ir
+                tid = (r.get("TGID", "") or "").strip()
+                tnum = safe_int(tid)
+                return (0, tnum) if tnum is not None else (1, tid)
+            rows = sorted(rows, key=tg_key)
+
+        # Clear and set columns
+        for iid in self.tree_trainer.get_children():
+            self.tree_trainer.delete(iid)
+
+        self.tree_trainer["columns"] = headers
+        for h in headers:
+            self.tree_trainer.heading(h, text=h)
+            self.tree_trainer.column(h, width=160, anchor="w")
+
+        for idx, r in rows:
+            vals = []
+            for h in headers:
+                if h == "TGID":
+                    tid = (r.get("TGID", "") or "").strip()
+                    vals.append(f"{tid}: {TEAM_NAMES.get(tid, tid)}" if tid else "")
+                else:
+                    vals.append((r.get(h, "") or ""))
+            self.tree_trainer.insert("", tk.END, iid=str(idx), values=vals)
+
+    def _on_trainer_select(self):
+        sel = self.tree_trainer.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        try:
+            idx = int(iid)
+        except Exception:
+            return
+        # find SKPT value from model if present
+        row = self.model.trainers[idx]
+        sk = row.get("SKPT") if row is not None else None
+        self.ent_trainer_skpt.delete(0, tk.END)
+        if sk is not None:
+            self.ent_trainer_skpt.insert(0, str(sk))
+
+    def _apply_trainer_skpt(self):
+        sel = self.tree_trainer.selection()
+        if not sel:
+            messagebox.showwarning("No selection", "Select a trainer row first.")
+            return
+        iid = sel[0]
+        try:
+            idx = int(iid)
+        except Exception:
+            return
+        val = self.ent_trainer_skpt.get().strip()
+        try:
+            v = safe_int(val)
+            if v is None:
+                raise ValueError("Invalid integer")
+            orig = v
+            # Clamp to allowed range
+            v = max(0, min(131071, v))
+            self.model.trainers[idx]["SKPT"] = str(v)
+            self.refresh_trainer()
+            if orig != v:
+                # show only the clamped numeric value (no decimal)
+                messagebox.showinfo("SKPT", str(v))
+        except Exception as e:
+            messagebox.showerror("Invalid SKPT", str(e))
+
+    def refresh_coach(self):
+        # Prefer TGID + name + SKPT when available
+        desired = ["TGID", "CFNM", "CLNM", "SKPT"]
+        headers = [h for h in desired if h in (self.model.coach_headers or [])]
+        if not headers:
+            headers = self.model.coach_headers
+
+        # Build filtering predicate from search box (first/last name)
+        q = (self.coach_search_var.get() or "").strip().lower() if hasattr(self, 'coach_search_var') else ""
+
+        # Prepare rows as (model_idx, row) and apply filter
+        rows = list(enumerate(self.model.coaches))
+        if q:
+            def match(r):
+                fn = (r.get("CFNM", "") or "").lower()
+                ln = (r.get("CLNM", "") or "").lower()
+                return q in fn or q in ln
+            rows = [(i, r) for i, r in rows if match(r)]
+
+        # Sort by TGID if present, numeric when possible
+        if "TGID" in (self.model.coach_headers or []):
+            def tg_key(ir):
+                _, r = ir
+                tid = (r.get("TGID", "") or "").strip()
+                tnum = safe_int(tid)
+                return (0, tnum) if tnum is not None else (1, tid)
+            rows = sorted(rows, key=lambda ir: (tg_key(ir), (ir[1].get("CLNM", "") or ""), (ir[1].get("CFNM", "") or "")))
+        else:
+            rows = sorted(rows, key=lambda ir: ((ir[1].get("CLNM", "") or ""), (ir[1].get("CFNM", "") or "")))
+
+        # clear and set columns
+        for iid in self.tree_coach.get_children():
+            self.tree_coach.delete(iid)
+
+        self.tree_coach["columns"] = headers or []
+        for h in headers or []:
+            self.tree_coach.heading(h, text=h)
+            self.tree_coach.column(h, width=140, anchor="w")
+
+        # Insert rows using original model indices as iids
+        for idx, r in rows:
+            vals = []
+            for h in headers or []:
+                if h == "TGID":
+                    tid = (r.get("TGID", "") or "").strip()
+                    vals.append(f"{tid}: {TEAM_NAMES.get(tid, tid)}" if tid else "")
+                else:
+                    vals.append((r.get(h, "") or ""))
+            self.tree_coach.insert("", tk.END, iid=str(idx), values=vals)
+
+    def _on_coach_select(self):
+        sel = self.tree_coach.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        try:
+            idx = int(iid)
+        except Exception:
+            return
+        row = self.model.coaches[idx]
+        sk = row.get("SKPT") if row is not None else None
+        self.ent_coach_skpt.delete(0, tk.END)
+        if sk is not None:
+            self.ent_coach_skpt.insert(0, str(sk))
+
+    def _apply_coach_skpt(self):
+        sel = self.tree_coach.selection()
+        if not sel:
+            messagebox.showwarning("No selection", "Select a coach row first.")
+            return
+        iid = sel[0]
+        try:
+            idx = int(iid)
+        except Exception:
+            return
+        val = self.ent_coach_skpt.get().strip()
+        try:
+            v = safe_int(val)
+            if v is None:
+                raise ValueError("Invalid integer")
+            orig = v
+            # Clamp to allowed range
+            v = max(0, min(131071, v))
+            self.model.coaches[idx]["SKPT"] = str(v)
+            self.refresh_coach()
+            if orig != v:
+                messagebox.showinfo("SKPT", str(v))
+        except Exception as e:
+            messagebox.showerror("Invalid SKPT", str(e))
+
+    def refresh_gm(self):
+        # Show TGID and SKPT if present (display team name for TGID)
+        desired = ["TGID", "SKPT"]
+        headers = [h for h in desired if h in (self.model.gm_headers or [])]
+        if not headers:
+            self._populate_tree_with_rows(self.tree_gm, self.model.gm_headers, self.model.gms)
+            return
+
+        # Prepare rows as (model_idx, row) for sorting
+        rows = list(enumerate(self.model.gms))
+
+        # Sort by TGID if present, numeric when possible
+        if "TGID" in (self.model.gm_headers or []):
+            def tg_key(ir):
+                _, r = ir
+                tid = (r.get("TGID", "") or "").strip()
+                tnum = safe_int(tid)
+                return (0, tnum) if tnum is not None else (1, tid)
+            rows = sorted(rows, key=tg_key)
+
+        # Clear and set columns
+        for iid in self.tree_gm.get_children():
+            self.tree_gm.delete(iid)
+
+        self.tree_gm["columns"] = headers
+        for h in headers:
+            self.tree_gm.heading(h, text=h)
+            self.tree_gm.column(h, width=160, anchor="w")
+
+        for idx, r in rows:
+            vals = []
+            for h in headers:
+                if h == "TGID":
+                    tid = (r.get("TGID", "") or "").strip()
+                    vals.append(f"{tid}: {TEAM_NAMES.get(tid, tid)}" if tid else "")
+                else:
+                    vals.append((r.get(h, "") or ""))
+            self.tree_gm.insert("", tk.END, iid=str(idx), values=vals)
+
+    def _on_gm_select(self):
+        sel = self.tree_gm.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        try:
+            idx = int(iid)
+        except Exception:
+            return
+        row = self.model.gms[idx]
+        sk = row.get("SKPT") if row is not None else None
+        self.ent_gm_skpt.delete(0, tk.END)
+        if sk is not None:
+            self.ent_gm_skpt.insert(0, str(sk))
+
+    def _apply_gm_skpt(self):
+        sel = self.tree_gm.selection()
+        if not sel:
+            messagebox.showwarning("No selection", "Select a GM row first.")
+            return
+        iid = sel[0]
+        try:
+            idx = int(iid)
+        except Exception:
+            return
+        val = self.ent_gm_skpt.get().strip()
+        try:
+            v = safe_int(val)
+            if v is None:
+                raise ValueError("Invalid integer")
+            orig = v
+            # Clamp to allowed range
+            v = max(0, min(131071, v))
+            self.model.gms[idx]["SKPT"] = str(v)
+            self.refresh_gm()
+            if orig != v:
+                messagebox.showinfo("SKPT", str(v))
+        except Exception as e:
+            messagebox.showerror("Invalid SKPT", str(e))
+
+    def _on_tree_double_click(self, event, tree: ttk.Treeview):
+        # Identify clicked row/column
+        region = tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        rowid = tree.identify_row(event.y)
+        col = tree.identify_column(event.x)  # returns like '#1'
+        if not rowid or not col:
+            return
+        try:
+            col_idx = int(col.replace('#', '')) - 1
+        except Exception:
+            return
+        cols = list(tree["columns"]) if tree["columns"] else []
+        if col_idx < 0 or col_idx >= len(cols):
+            return
+        colname = cols[col_idx]
+        if colname != "SKPT":
+            return
+
+        bbox = tree.bbox(rowid, column=col)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+
+        # Create entry overlay
+        entry = ttk.Entry(tree)
+        entry.place(x=x, y=y, width=w, height=h)
+        # prefill with current value
+        cur = tree.set(rowid, colname)
+        entry.insert(0, cur)
+        entry.focus_set()
+
+        def finish(save: bool):
+            val = entry.get().strip()
+            entry.destroy()
+            if not save:
+                return
+            try:
+                # Accept integer or integer-like float (e.g. "131071.0")
+                v = None
+                try:
+                    v = int(val)
+                except Exception:
+                    try:
+                        f = float(val)
+                        v = int(f)
+                    except Exception:
+                        v = None
+
+                if v is None:
+                    raise ValueError("Invalid integer")
+
+                orig_v = v
+                # Clamp to allowed range
+                v = max(0, min(131071, v))
+
+                try:
+                    idx = int(rowid)
+                except Exception:
+                    return
+
+                if tree is self.tree_trainer:
+                    self.model.trainers[idx]["SKPT"] = str(v)
+                    self.refresh_trainer()
+                elif tree is self.tree_coach:
+                    self.model.coaches[idx]["SKPT"] = str(v)
+                    self.refresh_coach()
+                elif tree is self.tree_gm:
+                    self.model.gms[idx]["SKPT"] = str(v)
+                    self.refresh_gm()
+            except Exception as e:
+                messagebox.showerror("Invalid SKPT", str(e))
+
+        entry.bind("<Return>", lambda e: finish(True))
+        entry.bind("<FocusOut>", lambda e: finish(True))
+        entry.bind("<Escape>", lambda e: finish(False))
 
     def on_apply_cap(self):
         if not self.model.salaries:
