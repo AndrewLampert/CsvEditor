@@ -350,6 +350,18 @@ class CSVModel:
 
         self.team_col = detect_team_col_case_sensitive(self.player_headers)
         self.max_map = build_player_max_map(self.player_headers)
+        # Ensure coach extra fields exist in headers and set defaults
+        coach_extra = ["CSPC", "SKPC", "SKPA", "SKPF", "CHEM"]
+        if self.coach_headers is None:
+            self.coach_headers = []
+        for f in coach_extra:
+            if f not in self.coach_headers:
+                self.coach_headers.append(f)
+        # Ensure each coach row has defaults (1..7 range default 1)
+        for r in self.coaches:
+            for f in coach_extra:
+                if (r.get(f, "") or "").strip() == "":
+                    r[f] = "1"
 
     def player_name(self, row):
         fn = (row.get(PLAYER_FIRST_NAME_CODE, "") or "").strip()
@@ -728,7 +740,8 @@ class App(tk.Tk):
         ttk.Label(frm, text="Salary Cap (slri.csv)").grid(row=0, column=0, sticky="w")
         self.ent_cap = ttk.Entry(frm, width=18)
         self.ent_cap.grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Button(frm, text="Click to apply changes (max 4,294,967,295)", command=self.on_apply_cap).grid(row=0, column=2, sticky="w", padx=8)
+        ttk.Button(frm, text="Set to Max", command=self.set_cap_to_max).grid(row=0, column=2, sticky="w", padx=4)
+        ttk.Button(frm, text="Click to apply changes (max 4,294,967,295)", command=self.on_apply_cap).grid(row=0, column=3, sticky="w", padx=4)
 
         self.lbl_cap_status = ttk.Label(root, text="Load slri.csv to edit cap.")
         self.lbl_cap_status.pack(anchor="w", padx=10, pady=(8, 0))
@@ -753,6 +766,7 @@ class App(tk.Tk):
         ttk.Label(btm, text="Selected SKPT:").pack(side="left")
         self.ent_trainer_skpt = ttk.Entry(btm, width=12)
         self.ent_trainer_skpt.pack(side="left", padx=(6, 8))
+        ttk.Button(btm, text="Set to Max", command=self.set_trainer_skpt_to_max).pack(side="left", padx=4)
         ttk.Button(btm, text="Apply SKPT", command=self._apply_trainer_skpt).pack(side="left")
         self.tree_trainer.bind("<<TreeviewSelect>>", lambda e: self._on_trainer_select())
         self.tree_trainer.bind("<Double-1>", lambda e: self._on_tree_double_click(e, self.tree_trainer))
@@ -769,11 +783,26 @@ class App(tk.Tk):
 
         # Search controls for coach first/last name
         self.coach_search_var = tk.StringVar()
-        ttk.Label(top, text="Search:").pack(side="left", padx=(12, 4))
+        ttk.Label(top, text="Search (First Last):").pack(side="left", padx=(12, 4))
         self.ent_coach_search = ttk.Entry(top, textvariable=self.coach_search_var, width=20)
         self.ent_coach_search.pack(side="left")
         ttk.Button(top, text="Find", command=lambda: self.refresh_coach()).pack(side="left", padx=(6, 4))
         ttk.Button(top, text="Clear", command=lambda: (self.coach_search_var.set(""), self.refresh_coach())).pack(side="left")
+
+        # Detailed help text explaining coach numeric fields (from guide)
+        help_text = (
+            "Strategy (CSPC): Defines a coach's ability to make worthwhile adjustments and suggestions on game day.\n\n"
+            "Play Call (SKPC): How good a coach is at calling plays. Raise this if you plan to let the CPU handle play calling.\n\n"
+            "Max Performance (SKPA): The coach's maximum performance potential — higher values raise the ceiling of performance reported to this coach.\n\n"
+            "Performance (SKPF): Current coach performance level affecting gameplay success rates for players who report to this coach.\n\n"
+            "Team Chemistry (CHEM): Defines a coach's ability to add innovative and effective plays to the team's playbook; raise if editing playbooks.\n\n"
+            "All values are 1–7 and will be clamped to that range. Increasing above 5 may provide diminishing or undocumented returns."
+        )
+        # place the help below the top controls so it wraps across full width
+        # place help in its own frame below the controls so it can span the full width
+        help_frame = ttk.Frame(root)
+        help_frame.pack(fill="x", padx=10)
+        tk.Label(help_frame, text=help_text, wraplength=1000, justify="left", fg="gray").pack(fill="x", pady=(6,0))
 
         self.tree_coach = ttk.Treeview(root, show="headings", height=20)
         self.tree_coach.pack(fill="both", expand=True, padx=10, pady=(0, 6))
@@ -784,6 +813,7 @@ class App(tk.Tk):
         ttk.Label(btm, text="Selected SKPT:").pack(side="left")
         self.ent_coach_skpt = ttk.Entry(btm, width=12)
         self.ent_coach_skpt.pack(side="left", padx=(6, 8))
+        ttk.Button(btm, text="Set to Max", command=self.set_coach_skpt_to_max).pack(side="left", padx=4)
         ttk.Button(btm, text="Apply SKPT", command=self._apply_coach_skpt).pack(side="left")
         self.tree_coach.bind("<<TreeviewSelect>>", lambda e: self._on_coach_select())
         self.tree_coach.bind("<Double-1>", lambda e: self._on_tree_double_click(e, self.tree_coach))
@@ -807,6 +837,7 @@ class App(tk.Tk):
         ttk.Label(btm, text="Selected SKPT:").pack(side="left")
         self.ent_gm_skpt = ttk.Entry(btm, width=12)
         self.ent_gm_skpt.pack(side="left", padx=(6, 8))
+        ttk.Button(btm, text="Set to Max", command=self.set_gm_skpt_to_max).pack(side="left", padx=4)
         ttk.Button(btm, text="Apply SKPT", command=self._apply_gm_skpt).pack(side="left")
         self.tree_gm.bind("<<TreeviewSelect>>", lambda e: self._on_gm_select())
         self.tree_gm.bind("<Double-1>", lambda e: self._on_tree_double_click(e, self.tree_gm))
@@ -1422,6 +1453,21 @@ class App(tk.Tk):
         if sk is not None:
             self.ent_trainer_skpt.insert(0, str(sk))
 
+    def set_trainer_skpt_to_max(self):
+        """Auto-fill trainer SKPT entry field with maximum value (131071)."""
+        self.ent_trainer_skpt.delete(0, tk.END)
+        self.ent_trainer_skpt.insert(0, "131071")
+
+    def set_coach_skpt_to_max(self):
+        """Auto-fill coach SKPT entry field with maximum value (131071)."""
+        self.ent_coach_skpt.delete(0, tk.END)
+        self.ent_coach_skpt.insert(0, "131071")
+
+    def set_gm_skpt_to_max(self):
+        """Auto-fill GM SKPT entry field with maximum value (131071)."""
+        self.ent_gm_skpt.delete(0, tk.END)
+        self.ent_gm_skpt.insert(0, "131071")
+
     def _apply_trainer_skpt(self):
         sel = self.tree_trainer.selection()
         if not sel:
@@ -1450,12 +1496,12 @@ class App(tk.Tk):
 
     def refresh_coach(self):
         # Prefer TGID + name + SKPT when available
-        desired = ["TGID", "CFNM", "CLNM", "SKPT"]
+        desired = ["TGID", "CFNM", "CLNM", "SKPT", "CSPC", "SKPC", "SKPA", "SKPF", "CHEM"]
         headers = [h for h in desired if h in (self.model.coach_headers or [])]
         if not headers:
             headers = self.model.coach_headers
 
-        # Build filtering predicate from search box (first/last name)
+        # Build filtering predicate from search box (supports "first last" or just first or last)
         q = (self.coach_search_var.get() or "").strip().lower() if hasattr(self, 'coach_search_var') else ""
 
         # Prepare rows as (model_idx, row) and apply filter
@@ -1464,7 +1510,13 @@ class App(tk.Tk):
             def match(r):
                 fn = (r.get("CFNM", "") or "").lower()
                 ln = (r.get("CLNM", "") or "").lower()
-                return q in fn or q in ln
+                parts = q.split()
+                if len(parts) == 2:
+                    # Search for first name + last name (e.g., "John Smith")
+                    return parts[0] in fn and parts[1] in ln
+                else:
+                    # Search in either first or last name
+                    return q in fn or q in ln
             rows = [(i, r) for i, r in rows if match(r)]
 
         # Sort by TGID if present, numeric when possible
@@ -1634,7 +1686,9 @@ class App(tk.Tk):
         if col_idx < 0 or col_idx >= len(cols):
             return
         colname = cols[col_idx]
-        if colname != "SKPT":
+        # Allow editing SKPT and new coach numeric columns
+        coach_numeric = {"SKPT": (0, 131071), "CSPC": (1, 7), "SKPC": (1, 7), "SKPA": (1, 7), "SKPF": (1, 7), "CHEM": (1, 7)}
+        if colname not in coach_numeric:
             return
 
         bbox = tree.bbox(rowid, column=col)
@@ -1671,22 +1725,35 @@ class App(tk.Tk):
                     raise ValueError("Invalid integer")
 
                 orig_v = v
-                # Clamp to allowed range
-                v = max(0, min(131071, v))
+                # Determine clamp range
+                lo, hi = coach_numeric.get(colname, (0, 131071))
+                v = max(lo, min(hi, v))
 
                 try:
                     idx = int(rowid)
                 except Exception:
                     return
 
+                target = None
                 if tree is self.tree_trainer:
-                    self.model.trainers[idx]["SKPT"] = str(v)
+                    target = self.model.trainers
+                elif tree is self.tree_coach:
+                    target = self.model.coaches
+                elif tree is self.tree_gm:
+                    target = self.model.gms
+                if target is None:
+                    return
+                # write back
+                try:
+                    target[idx][colname] = str(v)
+                except Exception:
+                    return
+                # refresh appropriate view
+                if tree is self.tree_trainer:
                     self.refresh_trainer()
                 elif tree is self.tree_coach:
-                    self.model.coaches[idx]["SKPT"] = str(v)
                     self.refresh_coach()
                 elif tree is self.tree_gm:
-                    self.model.gms[idx]["SKPT"] = str(v)
                     self.refresh_gm()
             except Exception as e:
                 messagebox.showerror("Invalid SKPT", str(e))
@@ -1694,6 +1761,11 @@ class App(tk.Tk):
         entry.bind("<Return>", lambda e: finish(True))
         entry.bind("<FocusOut>", lambda e: finish(True))
         entry.bind("<Escape>", lambda e: finish(False))
+
+    def set_cap_to_max(self):
+        """Auto-fill the salary cap entry field with maximum value."""
+        self.ent_cap.delete(0, tk.END)
+        self.ent_cap.insert(0, "4294967295")
 
     def on_apply_cap(self):
         if not self.model.salaries:
@@ -1726,17 +1798,6 @@ class App(tk.Tk):
             cap_row = self.model.salaries[0]
             cap_row[SALARY_CAP_KEY] = str(v)
             
-            # Save to CSV immediately
-            if self.model.slri_path:
-                try:
-                    self.model.save_csv(
-                        self.model.salaries,
-                        self.model.salary_headers,
-                        self.model.slri_path
-                    )
-                except Exception as save_err:
-                    print(f"Warning: Could not save CSV: {save_err}")
-            
             # Update display
             self.ent_cap.delete(0, tk.END)
             self.ent_cap.insert(0, str(v))
@@ -1744,7 +1805,9 @@ class App(tk.Tk):
             
             # Show result message
             if orig_v != v:
-                messagebox.showinfo("Clamped", f"Value {orig_v} was clamped to {v}")
+                messagebox.showinfo("Clamped", f"Value {orig_v} was clamped to {v}. Click 'Save' to write to file.")
+            else:
+                messagebox.showinfo("Updated", f"Salary cap set to {v}. Click 'Save' to write to file.")
             
         except Exception as e:
             messagebox.showerror("Cap Error", str(e))
