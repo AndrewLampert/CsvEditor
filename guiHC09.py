@@ -728,7 +728,7 @@ class App(tk.Tk):
         ttk.Label(frm, text="Salary Cap (slri.csv)").grid(row=0, column=0, sticky="w")
         self.ent_cap = ttk.Entry(frm, width=18)
         self.ent_cap.grid(row=0, column=1, sticky="w", padx=8)
-        ttk.Button(frm, text="Apply (max 260,000,000)", command=self.on_apply_cap).grid(row=0, column=2, sticky="w", padx=8)
+        ttk.Button(frm, text="Click to apply changes (max 4,294,967,295)", command=self.on_apply_cap).grid(row=0, column=2, sticky="w", padx=8)
 
         self.lbl_cap_status = ttk.Label(root, text="Load slri.csv to edit cap.")
         self.lbl_cap_status.pack(anchor="w", padx=10, pady=(8, 0))
@@ -1699,16 +1699,53 @@ class App(tk.Tk):
         if not self.model.salaries:
             messagebox.showinfo("No salary data", "Load slri.csv first.")
             return
+        
         raw = self.ent_cap.get().strip()
+        if not raw:
+            messagebox.showwarning("Empty field", "Enter a salary cap value.")
+            return
+        
         try:
-            v = int(raw)
-            v = max(0, min(260_000_000, v))
+            # Parse as integer, with float fallback
+            v = None
+            try:
+                v = int(raw)
+            except ValueError:
+                try:
+                    v = int(float(raw))
+                except ValueError:
+                    raise ValueError("Invalid number format")
+            
+            # Remember original for comparison
+            orig_v = v
+            
+            # Clamp to allowed range (0–4,294,967,295 = 0xFFFFFFFF)
+            v = max(0, min(4_294_967_295, v))
+            
+            # Update model
             cap_row = self.model.salaries[0]
-            if SALARY_CAP_KEY in cap_row:
-                cap_row[SALARY_CAP_KEY] = str(v)
-            else:
-                cap_row["SCAD"] = str(v)
-            messagebox.showinfo("Updated", f"Salary cap set to {v}")
+            cap_row[SALARY_CAP_KEY] = str(v)
+            
+            # Save to CSV immediately
+            if self.model.slri_path:
+                try:
+                    self.model.save_csv(
+                        self.model.salaries,
+                        self.model.salary_headers,
+                        self.model.slri_path
+                    )
+                except Exception as save_err:
+                    print(f"Warning: Could not save CSV: {save_err}")
+            
+            # Update display
+            self.ent_cap.delete(0, tk.END)
+            self.ent_cap.insert(0, str(v))
+            self.lbl_cap_status.configure(text=f"Updated to {v}")
+            
+            # Show result message
+            if orig_v != v:
+                messagebox.showinfo("Clamped", f"Value {orig_v} was clamped to {v}")
+            
         except Exception as e:
             messagebox.showerror("Cap Error", str(e))
 
