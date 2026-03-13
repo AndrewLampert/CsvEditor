@@ -46,6 +46,7 @@ DRAFT_PICK_NUM = "DPNM"
 DRAFT_PICK_YEAR = "DPYO"
 
 SALARY_CAP_KEY = "SCAD"
+PLAYER_CONTRACT_MAX_VALUE = 4_294_967_295
 AGE_COL = "PAGE"
 YEARS_COL = "PYRP"
 
@@ -239,6 +240,32 @@ def build_player_max_map(headers):
         if base in STAT_META and mx in hs:
             out[base] = mx
     return out
+
+def detect_contract_columns(headers):
+    """Best-effort detection for player salary/bonus columns in play.csv."""
+    headers = headers or []
+
+    def pick_column(exact_candidates, contains_candidates):
+        upper_map = {h.upper(): h for h in headers}
+        for candidate in exact_candidates:
+            hit = upper_map.get(candidate.upper())
+            if hit:
+                return hit
+        for h in headers:
+            hu = h.upper()
+            if any(token in hu for token in contains_candidates):
+                return h
+        return ""
+
+    salary_col = pick_column(
+        ["PSAL", "SALARY", "SALR", "SALA", "SALY", "CSAL"],
+        ["SAL"]
+    )
+    bonus_col = pick_column(
+        ["PBON", "BONUS", "BONU", "BONS", "PBON"],
+        ["BON"]
+    )
+    return salary_col, bonus_col
 
 def sanitize_name(raw: str, max_len: int = 15) -> str:
     """
@@ -564,6 +591,8 @@ class App(tk.Tk):
         self.selected_stat_key = None
         self._player_index_map = []
         self._pick_index_map = []  # For acquire picks dropdown mapping
+        self._detected_salary_col = ""
+        self._detected_bonus_col = ""
 
         self._build_ui()
 
@@ -681,6 +710,34 @@ class App(tk.Tk):
         self.ent_years = ttk.Entry(info, width=8)
         self.ent_years.grid(row=0, column=3, sticky="w", padx=(6, 16))
         ttk.Button(info, text="Apply Age/Years", command=self.on_apply_age_years).grid(row=0, column=4, sticky="w")
+
+        contract = ttk.LabelFrame(right, text="Contract Editor (salary / bonus in play.csv)")
+        contract.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(contract, text="Salary Col").grid(row=0, column=0, sticky="w")
+        self.cmb_salary_col = ttk.Combobox(contract, width=16, state="readonly")
+        self.cmb_salary_col.grid(row=0, column=1, sticky="w", padx=6)
+        self.cmb_salary_col.bind("<<ComboboxSelected>>", lambda e: self.on_contract_column_changed())
+
+        ttk.Label(contract, text="Salary Value").grid(row=0, column=2, sticky="w", padx=(10, 0))
+        self.ent_salary_val = ttk.Entry(contract, width=16)
+        self.ent_salary_val.grid(row=0, column=3, sticky="w", padx=6)
+
+        ttk.Label(contract, text="Bonus Col").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.cmb_bonus_col = ttk.Combobox(contract, width=16, state="readonly")
+        self.cmb_bonus_col.grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
+        self.cmb_bonus_col.bind("<<ComboboxSelected>>", lambda e: self.on_contract_column_changed())
+
+        ttk.Label(contract, text="Bonus Value").grid(row=1, column=2, sticky="w", padx=(10, 0), pady=(6, 0))
+        self.ent_bonus_val = ttk.Entry(contract, width=16)
+        self.ent_bonus_val.grid(row=1, column=3, sticky="w", padx=6, pady=(6, 0))
+
+        ttk.Button(contract, text="Apply Salary/Bonus", command=self.on_apply_contract).grid(
+            row=0, column=4, rowspan=2, sticky="w", padx=(8, 0)
+        )
+
+        self.lbl_contract_status = ttk.Label(contract, text="Load play.csv to detect contract columns.")
+        self.lbl_contract_status.grid(row=2, column=0, columnspan=5, sticky="w", pady=(8, 0))
 
         # Raw column editor (ANY column)
         raw = ttk.LabelFrame(right, text="Raw Column Editor (any header)")
@@ -899,6 +956,7 @@ class App(tk.Tk):
             self.refresh_trainer()
             self.refresh_coach()
             self.refresh_gm()
+            self.refresh_contract_columns()
             self.refresh_raw_columns()
             self._select_default_team()
 
@@ -1025,6 +1083,9 @@ class App(tk.Tk):
         self.ent_first.insert(0, (r.get(PLAYER_FIRST_NAME_CODE, "") or "").strip())
         self.ent_last.delete(0, tk.END)
         self.ent_last.insert(0, (r.get(PLAYER_LAST_NAME_CODE, "") or "").strip())
+
+        # Prefill contract editor
+        self.refresh_contract_values()
 
         # Prefill raw column value
         self.on_raw_column_changed()
@@ -1202,6 +1263,103 @@ class App(tk.Tk):
             self.refresh_players_for_team()
         except Exception as e:
             messagebox.showerror("Apply Error", str(e))
+
+    # ---------- Contract Editor ----------
+    def refresh_contract_columns(self):
+        headers = self.model.player_headers or []
+        values = [""] + headers
+        self.cmb_salary_col["values"] = values
+        self.cmb_bonus_col["values"] = values
+
+        self._detected_salary_col, self._detected_bonus_col = detect_contract_columns(headers)
+
+        salary_choice = self._detected_salary_col if self._detected_salary_col in headers else ""
+        bonus_choice = self._detected_bonus_col if self._detected_bonus_col in headers else ""
+
+        self.cmb_salary_col.set(salary_choice)
+        self.cmb_bonus_col.set(bonus_choice)
+
+        status_bits = []
+        if salary_choice:
+            status_bits.append(f"Salary={salary_choice}")
+        else:
+            status_bits.append("Salary not auto-detected")
+        if bonus_choice:
+            status_bits.append(f"Bonus={bonus_choice}")
+        else:
+            status_bits.append("Bonus not auto-detected")
+        self.lbl_contract_status.configure(text=" | ".join(status_bits))
+
+        self.refresh_contract_values()
+
+    def refresh_contract_values(self):
+        if self.selected_player_index is None:
+            self.ent_salary_val.delete(0, tk.END)
+            self.ent_bonus_val.delete(0, tk.END)
+            return
+
+        row = self.model.players[self.selected_player_index]
+        salary_col = self.cmb_salary_col.get().strip()
+        bonus_col = self.cmb_bonus_col.get().strip()
+
+        self.ent_salary_val.delete(0, tk.END)
+        if salary_col:
+            self.ent_salary_val.insert(0, (row.get(salary_col, "") or "").strip())
+
+        self.ent_bonus_val.delete(0, tk.END)
+        if bonus_col:
+            self.ent_bonus_val.insert(0, (row.get(bonus_col, "") or "").strip())
+
+    def on_contract_column_changed(self):
+        self.refresh_contract_values()
+
+    def _parse_contract_value(self, raw):
+        try:
+            return int(raw)
+        except ValueError:
+            return int(float(raw))
+
+    def on_apply_contract(self):
+        if self.selected_player_index is None:
+            messagebox.showinfo("No player", "Select a player first.")
+            return
+
+        salary_col = self.cmb_salary_col.get().strip()
+        bonus_col = self.cmb_bonus_col.get().strip()
+        if not salary_col and not bonus_col:
+            messagebox.showwarning("No columns", "Choose a salary and/or bonus column first.")
+            return
+
+        row = self.model.players[self.selected_player_index]
+        updates = []
+
+        try:
+            if salary_col:
+                raw_salary = self.ent_salary_val.get().strip()
+                if raw_salary != "":
+                    salary_val = self._parse_contract_value(raw_salary)
+                    salary_val = max(0, min(PLAYER_CONTRACT_MAX_VALUE, salary_val))
+                    row[salary_col] = str(salary_val)
+                    updates.append(f"{salary_col}={salary_val}")
+
+            if bonus_col:
+                raw_bonus = self.ent_bonus_val.get().strip()
+                if raw_bonus != "":
+                    bonus_val = self._parse_contract_value(raw_bonus)
+                    bonus_val = max(0, min(PLAYER_CONTRACT_MAX_VALUE, bonus_val))
+                    row[bonus_col] = str(bonus_val)
+                    updates.append(f"{bonus_col}={bonus_val}")
+
+            if not updates:
+                messagebox.showwarning("Nothing to apply", "Enter a salary and/or bonus value to update.")
+                return
+
+            self.refresh_contract_values()
+            self.refresh_players_for_team()
+            self.refresh_stats_for_player()
+            messagebox.showinfo("Contract updated", "Updated " + ", ".join(updates))
+        except Exception as e:
+            messagebox.showerror("Contract Error", str(e))
 
     # ---------- Trades ----------
     def on_open_swap_trade(self):
